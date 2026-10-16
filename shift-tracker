@@ -1,0 +1,271 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shift Tracker</title>
+<style>
+:root {
+  --bg: #101411;
+  --panel: #1b211d;
+  --green: #a7f36a;
+  --text: #f3f6f0;
+  --muted: #a2aca3;
+  --red: #ff817b;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 22px 16px 40px;
+  background: var(--bg); color: var(--text);
+  font: 16px -apple-system, BlinkMacSystemFont, sans-serif;
+}
+main { max-width: 520px; margin: auto; }
+h1 { font-size: 30px; margin-bottom: 5px; }
+p { color: var(--muted); }
+.panel {
+  background: var(--panel); border-radius: 18px;
+  padding: 20px; margin: 16px 0;
+}
+.label { color: var(--muted); font-size: 13px; }
+.big { font-size: 38px; font-weight: 750; margin: 8px 0; }
+button, input {
+  font: inherit; border-radius: 12px;
+  padding: 14px; border: 1px solid #384139;
+}
+button { cursor: pointer; font-weight: 700; }
+.primary {
+  background: var(--green); color: #14200d;
+  border: 0; width: 100%; margin-top: 12px;
+}
+.secondary {
+  background: #29312b; color: var(--text);
+}
+.danger { color: var(--red); background: transparent; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+input {
+  background: #101411; color: var(--text); width: 100%;
+  margin: 8px 0 12px;
+}
+.row {
+  display: flex; justify-content: space-between;
+  align-items: center; gap: 12px;
+}
+.shift { border-top: 1px solid #343d35; padding: 14px 0; }
+.shift:first-child { border-top: 0; }
+.shift small { color: var(--muted); display: block; margin-top: 5px; }
+.shift button { padding: 7px 10px; font-size: 12px; }
+.green { color: var(--green); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Shift Tracker</h1>
+  <p id="today"></p>
+
+  <section class="panel">
+    <div class="label" id="status">CURRENT STATUS</div>
+    <div class="big" id="timer">00:00:00</div>
+    <p id="started">You're currently clocked out.</p>
+    <button class="primary" id="clockBtn">CLOCK IN</button>
+  </section>
+
+  <section class="grid">
+    <div class="panel">
+      <div class="label">THIS WEEK</div>
+      <div class="big" id="weekHours">0.00</div>
+      <div class="label">hours worked</div>
+    </div>
+    <div class="panel">
+      <div class="label">EST. EARNINGS</div>
+      <div class="big" id="earnings">$0.00</div>
+      <div class="label">before taxes</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h3>Settings</h3>
+    <label class="label" for="rate">Hourly pay ($)</label>
+    <input id="rate" type="number" min="0" step="0.01" value="14.66">
+    <label class="label" for="breakMins">Unpaid break per completed shift (minutes)</label>
+    <input id="breakMins" type="number" min="0" step="1" value="0">
+    <button class="secondary" id="saveSettings">Save settings</button>
+  </section>
+
+  <section class="panel">
+    <div class="row">
+      <h3>Shift history</h3>
+      <button class="secondary" id="exportBtn">Export CSV</button>
+    </div>
+    <p id="count">No shifts yet.</p>
+    <div id="history"></div>
+  </section>
+  <p style="font-size:12px">Your records are stored in this browser on this device. Export backups regularly.</p>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const KEY = "shift-tracker-v1";
+
+let data;
+try {
+  data = JSON.parse(localStorage.getItem(KEY)) || {
+    active: null, shifts: [], rate: 14.66, breakMins: 0
+  };
+} catch {
+  data = { active: null, shifts: [], rate: 14.66, breakMins: 0 };
+}
+
+function save() {
+  localStorage.setItem(KEY, JSON.stringify(data));
+}
+
+function dateKey(ms) {
+  const d = new Date(ms);
+  return d.getFullYear() + "-" +
+    String(d.getMonth()+1).padStart(2,"0") + "-" +
+    String(d.getDate()).padStart(2,"0");
+}
+
+function mondayKey(ms) {
+  const d = new Date(ms);
+  d.setHours(0,0,0,0);
+  d.setDate(d.getDate() - (d.getDay()+6)%7);
+  return dateKey(d.getTime());
+}
+
+function fmtTime(ms) {
+  return new Date(ms).toLocaleTimeString([], {
+    hour: "numeric", minute: "2-digit"
+  });
+}
+
+function fmtDate(ms) {
+  return new Date(ms).toLocaleDateString([], {
+    month: "short", day: "numeric", year: "numeric"
+  });
+}
+
+function hours(shift) {
+  const end = shift.end ?? Date.now();
+  const gross = Math.max(0, end - shift.start) / 3600000;
+  const unpaid = shift.end ? Number(data.breakMins || 0)/60 : 0;
+  return Math.max(0, gross - unpaid);
+}
+
+function render() {
+  const now = Date.now();
+  $("today").textContent = new Date().toLocaleDateString([], {
+    weekday: "long", month: "long", day: "numeric"
+  });
+  $("rate").value = data.rate;
+  $("breakMins").value = data.breakMins;
+
+  $("status").textContent = data.active ? "CLOCKED IN" : "CURRENT STATUS";
+  $("timer").textContent = data.active
+    ? new Date(now - data.active.start).toISOString().slice(11,19)
+    : "00:00:00";
+  $("started").textContent = data.active
+    ? "Started " + fmtTime(data.active.start) +
+      " · " + fmtDate(data.active.start)
+    : "You're currently clocked out.";
+  $("clockBtn").textContent = data.active ? "CLOCK OUT" : "CLOCK IN";
+  $("clockBtn").style.background = data.active ? "#ff817b" : "var(--green)";
+  $("clockBtn").style.color = data.active ? "#26100e" : "#14200d";
+
+  const weekStart = mondayKey(now);
+  const week = data.shifts.filter(s => mondayKey(s.start) === weekStart);
+  const weekMs = week.reduce((sum,s) => sum + hours(s)*3600000, 0);
+  const liveMs = data.active && mondayKey(data.active.start) === weekStart
+    ? Math.max(0, now - data.active.start) : 0;
+  const totalHours = (weekMs + liveMs)/3600000;
+
+  $("weekHours").textContent = totalHours.toFixed(2);
+  $("earnings").textContent =
+    (totalHours * Math.max(0, Number(data.rate)||0)).toLocaleString(
+      "en-US", {style:"currency", currency:"USD"}
+    );
+
+  $("count").textContent = data.shifts.length +
+    (data.shifts.length === 1 ? " saved shift" : " saved shifts");
+
+  $("history").innerHTML = "";
+  [...data.shifts].reverse().forEach(s => {
+    const item = document.createElement("div");
+    item.className = "shift";
+    const left = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = fmtDate(s.start);
+    const detail = document.createElement("small");
+    detail.textContent = fmtTime(s.start) + " – " +
+      (s.end ? fmtTime(s.end) : "In progress") +
+      " · " + hours(s).toFixed(2) + " hours";
+    left.append(title, detail);
+
+    const del = document.createElement("button");
+    del.className = "danger";
+    del.textContent = "Delete";
+    del.onclick = () => {
+      if (!confirm("Delete this shift permanently?")) return;
+      data.shifts = data.shifts.filter(x => x.id !== s.id);
+      save(); render();
+    };
+    const row = document.createElement("div");
+    row.className = "row";
+    row.append(left, del);
+    item.append(row);
+    $("history").append(item);
+  });
+}
+
+$("clockBtn").onclick = () => {
+  if (data.active) {
+    const end = Date.now();
+    if (end < data.active.start) return alert("Check your device clock.");
+    data.shifts.push({
+      id: Date.now() + "-" + Math.random().toString(36).slice(2),
+      start: data.active.start,
+      end
+    });
+    data.active = null;
+  } else {
+    data.active = { start: Date.now() };
+  }
+  save(); render();
+};
+
+$("saveSettings").onclick = () => {
+  const rate = Number($("rate").value);
+  const mins = Number($("breakMins").value);
+  if (!Number.isFinite(rate) || rate < 0 ||
+      !Number.isInteger(mins) || mins < 0 || mins > 1440) {
+    return alert("Enter a valid hourly rate and break length.");
+  }
+  data.rate = rate;
+  data.breakMins = mins;
+  save(); render();
+};
+
+$("exportBtn").onclick = () => {
+  const rows = [["Date","Clock In","Clock Out","Hours","Gross Estimate"]];
+  data.shifts.forEach(s => rows.push([
+    fmtDate(s.start), fmtTime(s.start),
+    s.end ? fmtTime(s.end) : "In progress",
+    hours(s).toFixed(2),
+    (hours(s)*Number(data.rate)).toFixed(2)
+  ]));
+  const csv = rows.map(r => r.map(v =>
+    '"' + String(v).replace(/"/g,'""') + '"'
+  ).join(",")).join("\r\n");
+  const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "shift-history.csv";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+render();
+setInterval(render, 1000);
+</script>
+</body>
+</html>
